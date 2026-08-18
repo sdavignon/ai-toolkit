@@ -3,7 +3,7 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -49,11 +49,8 @@ def _prepare_dataset(job_input: dict, dataset_dir: Path, trigger: str) -> int:
         if not url or not str(url).startswith(("http://", "https://")):
             raise ValueError(f"images[{index - 1}] is missing a valid http(s) url")
 
-        suffix = Path(urllib.request.urlparse(url).path).suffix.lower()
-        if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
-            suffix = ".jpg"
-        if suffix == ".webp":
-            # AI Toolkit's documented FLUX example expects jpg/jpeg/png.
+        suffix = Path(urllib.parse.urlparse(url).path).suffix.lower()
+        if suffix not in {".jpg", ".jpeg", ".png"}:
             suffix = ".jpg"
 
         stem = f"{index:04d}"
@@ -151,9 +148,9 @@ def _find_weights(output_dir: Path) -> list[Path]:
 
 def handler(job):
     job_input = job.get("input") or {}
-    name = _slug(job_input.get("name", "flux-lora"))
+    name = _slug(str(job_input.get("name", "flux-lora")))
     trigger = str(job_input.get("trigger_word") or name).strip()
-    lora_type = _slug(job_input.get("type", "character"))
+    lora_type = _slug(str(job_input.get("type", "character")))
 
     work_dir = TRAINING_ROOT / name
     dataset_dir = work_dir / "dataset"
@@ -171,15 +168,11 @@ def handler(job):
     config_path = config_dir / "train.yaml"
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 
-    env = os.environ.copy()
-    if job_input.get("hf_token"):
-        env["HF_TOKEN"] = str(job_input["hf_token"])
-
     command = ["python", str(ROOT / "run.py"), str(config_path)]
     completed = subprocess.run(
         command,
         cwd=str(ROOT),
-        env=env,
+        env=os.environ.copy(),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -216,7 +209,6 @@ def handler(job):
         shutil.copy2(weight, destination)
         published.append(str(destination))
 
-    final_path = published[-1]
     manifest = {
         "status": "completed",
         "name": name,
@@ -224,7 +216,7 @@ def handler(job):
         "trigger_word": trigger,
         "image_count": image_count,
         "model": job_input.get("model", "black-forest-labs/FLUX.1-dev"),
-        "lora_path": final_path,
+        "lora_path": published[-1],
         "checkpoints": published,
         "training_dir": str(work_dir),
         "log_path": str(log_path),
